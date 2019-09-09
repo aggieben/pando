@@ -1,11 +1,23 @@
-pub mod cor;
 
 pub enum CorErr {
 
 }
 
 pub struct TypeDef {
+    
+}
+impl TypeDef {
+    pub fn attributes_iter() -> Result<TypeDefIterator, CorErr> {
 
+    }
+
+    pub fn events_iter() -> Result<TypeDefIterator, CorErr> {
+
+    }
+
+    pub fn fields_iter() -> Result<TypeDefIterator, CorErr> {
+
+    }
 }
 
 pub struct TypeRef {
@@ -31,14 +43,35 @@ pub enum ResolutionScope {
     Type(TypeRef)
 }
 
+pub struct MetaDataIterator<T> {
+
+}
+impl Iterator for TypeDefIterator {
+
+}
+
+pub struct TypeRefIterator {
+
+}
+impl Iterator for TypeRefIterator {
+
+}
+
+
 pub trait MetaDataImporter {
     // The following are from the IMetaDataImporter interface
 
-    // CloseEnum
-    // CountEnum
+    // CloseEnum [obsolete]
+    // CountEnum [obsolete]
+    // Note: the above two methods are obsoleted by facilities available in Rust.
+    // i.e., there's no need to "close the handle" or count enumerations
+    // when we can represent the enum with a struct and an iterator.
+
+    // the following are implemented on the TypeDef struct
     // EnumCustomAttributes
     // EnumEvents
     // EnumFields
+
     // EnumFieldsWithName
     // EnumInterfaceImpls
     // EnumMemberRefs
@@ -52,8 +85,13 @@ pub trait MetaDataImporter {
     // EnumPermissionSets
     // EnumProperties
     // EnumSignatures
+    
     // EnumTypeDefs
+    fn typedef_iter() -> Result<impl Iterator<Item = &TypeDef>, CorErr>;
+    
     // EnumTypeRefs
+    fn typeref_iter() -> Result<impl Iterator<Item = &TypeRef>, CorErr>;
+
     // EnumTypeSpecs
     // EnumUnresolvedMethods
     // EnumUserStrings
@@ -81,7 +119,7 @@ pub trait MetaDataImporter {
     // GetMethodSemantics
     // GetModuleFromScope
     // GetModuleRefProps
-    // GetNameFromToken [obsolete]
+    // GetNameFromToken [deprecated]
     // GetNativeCallConvFromSig
     // GetNestedClassProps
     // GetParamForMethodIndex
@@ -113,3 +151,4 @@ pub trait MetaDataImporter {
     // GetVersionString
     fn get_version_string() -> Result<String, CorErr>;
 }
+
