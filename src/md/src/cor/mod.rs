@@ -7,17 +7,17 @@ pub struct TypeDef {
     
 }
 impl TypeDef {
-    pub fn attributes_iter() -> Result<TypeDefIterator, CorErr> {
+    // pub fn attributes_iter() -> Result<Iterator, CorErr> {
 
-    }
+    // }
 
-    pub fn events_iter() -> Result<TypeDefIterator, CorErr> {
+    // pub fn events_iter() -> Result<Iterator, CorErr> {
 
-    }
+    // }
 
-    pub fn fields_iter() -> Result<TypeDefIterator, CorErr> {
+    // pub fn fields_iter() -> Result<Iterator, CorErr> {
 
-    }
+    // }
 }
 
 pub struct TypeRef {
@@ -41,20 +41,6 @@ pub enum ResolutionScope {
     Module(ModuleRef),
     Assembly(AssemblyRef),
     Type(TypeRef)
-}
-
-pub struct MetaDataIterator<T> {
-
-}
-impl Iterator for TypeDefIterator {
-
-}
-
-pub struct TypeRefIterator {
-
-}
-impl Iterator for TypeRefIterator {
-
 }
 
 
@@ -87,10 +73,10 @@ pub trait MetaDataImporter {
     // EnumSignatures
     
     // EnumTypeDefs
-    fn typedef_iter() -> Result<impl Iterator<Item = &TypeDef>, CorErr>;
+    fn typedef_iter() -> Result<Iterator, CorErr>;
     
     // EnumTypeRefs
-    fn typeref_iter() -> Result<impl Iterator<Item = &TypeRef>, CorErr>;
+    fn typeref_iter() -> Result<Iterator, CorErr>;
 
     // EnumTypeSpecs
     // EnumUnresolvedMethods
