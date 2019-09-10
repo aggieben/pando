@@ -1,7 +1,5 @@
 use std::convert::TryInto;
 use std::fs;
-use std::time::{SystemTime};
-
 
 #[derive(Debug)]
 pub enum Error {
@@ -13,7 +11,7 @@ pub struct Image {
     header:Header
 }
 impl Image {
-    pub fn new(bytes: &[u8]) -> Result<Image, Error> {
+    pub fn from(bytes: &[u8]) -> Result<Image, Error> {
         validate_dos_header(bytes).expect("header validation failed");
         let lfanew = get_lfanew(bytes);
         validate_pe_signature(bytes, lfanew).expect("header validation failed");
@@ -22,7 +20,7 @@ impl Image {
 
     pub fn from_file(path: &str) -> Result<Image, Error> {
         match fs::read(path) {
-            Ok(v) => match Image::new(v.as_slice()) {
+            Ok(v) => match Image::from(v.as_slice()) {
                 Ok(img) => Ok(img),
                 err => err
             },
@@ -37,9 +35,38 @@ pub struct Header {
 
 pub struct FileHeader {
     num_sections : u16,
-    timestamp : u32, // epoch
+    timestamp : u32, // epoch, seconds
     opt_hdr_sz : u16,
-    flags : u16
+    flags : FileHeaderFlags
+}
+impl FileHeader {
+    fn from(bytes: &[u8], lfanew:usize) -> Result<FileHeader, Error> {
+        let hdr_bytes = &bytes[lfanew+4..lfanew+24];
+
+        if hdr_bytes[0..2] != [0x4c, 0x01] {
+            return Err(Error::HeaderFormat("invalid PE file header; expecting 0x014c".to_string()));
+        }
+
+        let num_section_bytes = &hdr_bytes[2..4];
+        let timestamp_bytes = &hdr_bytes[4..8];
+        let opt_size_bytes = &hdr_bytes[16..18];
+        let flags_bytes = &hdr_bytes[18..20];
+
+        Ok(FileHeader {
+            num_sections: 
+        })
+    }
+}
+
+bitflags! {
+    struct FileHeaderFlags : u16 {
+        const IMAGE_FILE_RELOCS_STRIPPED = 0x0001;
+        const IMAGE_FILE_EXECUTABLE_IMAGE = 0x0002;
+        const IMAGE_FILE_32BIT_MACHINE = 0x0100;
+        const IMAGE_FILE_DLL = 0x2000;
+        // implementation-specific flags (pivate?)
+        // 0x0010, 0x0020, 0x0400, 0x0800
+    }
 }
 
 pub struct OptionalHeader {
