@@ -73,10 +73,10 @@ pub trait MetaDataImporter {
     // EnumSignatures
     
     // EnumTypeDefs
-    fn typedef_iter() -> Result<Iterator, CorErr>;
+    //fn typedef_iter() -> Result<Iterator, CorErr>;
     
     // EnumTypeRefs
-    fn typeref_iter() -> Result<Iterator, CorErr>;
+    //fn typeref_iter() -> Result<Iterator, CorErr>;
 
     // EnumTypeSpecs
     // EnumUnresolvedMethods
