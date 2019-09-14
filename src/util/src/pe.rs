@@ -1,13 +1,36 @@
+use std::option::{Option};
 use nom::{IResult};
 use nom::bytes::complete::*;
 use nom::number::complete::*;
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct FileHeader {
     num_sections : u16,
     timestamp : u32,
     opt_header_sz : u16,
-    flags : u16
+    flags : Option<HeaderFlags>
+}
+
+bitflags! {
+    struct HeaderFlags : u16 {
+        const IMAGE_FILE_RELOCS_STRIPPED            = 0x0001;
+        const IMAGE_FILE_EXECUTABLE_IMAGE           = 0x0002;
+        const IMAGE_FILE_LINE_NUMS_STRIPPED         = 0x0004;
+        const IMAGE_FILE_LOCAL_SYMS_STRIPPED        = 0x0008;
+        const IMAGE_FILE_AGGRESSIVE_WS_TRIM         = 0x0010;
+        const IMAGE_FILE_LARGE_ADDRESS_AWARE        = 0x0020;
+        const _RESERVED                             = 0x0040;
+        const IMAGE_FILE_BYTES_REVERSED_LO          = 0x0080;
+        const IMAGE_FILE_32BIT_MACHINE              = 0x0100;
+        const IMAGE_FILE_DEBUG_STRIPPED             = 0x0200;
+        const IMAGE_FILE_REMOVABLE_RUN_FROM_SWAP    = 0x0400;
+        const IMAGE_FILE_NET_RUN_FROM_SWAP          = 0x0800;
+        const IMAGE_FILE_SYSTEM                     = 0x1000;
+        const IMAGE_FILE_DLL                        = 0x2000;
+        const IMAGE_FILE_UP_SYSTEM_ONLY             = 0x4000;
+        const IMAGE_FILE_BYTES_REVERSED_HI          = 0x8000;
+    }
 }
 
 fn validate_msdos_header(input:&[u8]) -> IResult<&[u8], u32> {
@@ -59,7 +82,7 @@ fn parse_pe_file_header(input:&[u8]) -> IResult<&[u8], FileHeader> {
         num_sections: num_sections,
         timestamp: timestamp,
         opt_header_sz: opt_hdr_sz,
-        flags: flags
+        flags: HeaderFlags::from_bits(flags)
     }))
 }
 
@@ -105,7 +128,15 @@ mod tests {
 
         assert!(result.is_ok());
 
-        let (remaining_input,_) = result.unwrap();
+        let (remaining_input,header) = result.unwrap();
         assert_eq!(remaining_input.len(), 0);
+
+        assert_eq!(header.num_sections, 3);
+        assert_eq!(header.timestamp, 0xb669c63c);
+        assert_eq!(header.opt_header_sz, 0x00e0);
+        assert_eq!(header.flags, Some(
+            HeaderFlags::IMAGE_FILE_DLL
+            |HeaderFlags::IMAGE_FILE_LARGE_ADDRESS_AWARE
+            |HeaderFlags::IMAGE_FILE_EXECUTABLE_IMAGE));
     }
 }
