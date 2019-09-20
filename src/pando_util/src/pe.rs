@@ -8,7 +8,7 @@ use nom::number::complete::*;
 #[derive(Debug)]
 #[allow(dead_code)]
 struct CoffFileHeader {
-    machine : u16,
+    machine : Machine,
     num_sections : u16,
     timestamp : u32,
     opt_header_size : u16,
@@ -17,6 +17,7 @@ struct CoffFileHeader {
 
 #[repr(u16)]
 #[allow(dead_code)]
+#[derive(Debug)]
 enum Machine {
     ImageFileMachineUnknown = 0,
     ImageFileMachineAm33 = 0x1d3,        // Matsushita AM33
@@ -43,6 +44,67 @@ enum Machine {
     ImageFileMachineSh5 = 0x1a8,         // Hitachi SH5
     ImageFileMachineThumb = 0x1c2,       // Thumb
     ImageFileMachineWcemipsv2 = 0x169    // MIPS little-endian WCE v2
+}
+
+impl TryFrom<u16> for Machine {
+    type Error = ();
+
+    fn try_from(val:u16) -> Result<Machine,Self::Error> {
+        match val {
+            v if v == Machine::ImageFileMachineUnknown as u16
+                => Ok(Machine::ImageFileMachineUnknown),
+            v if v == Machine::ImageFileMachineAm33 as u16
+                => Ok(Machine::ImageFileMachineAm33),
+            v if v == Machine::ImageFileMachineAmd64 as u16
+                => Ok(Machine::ImageFileMachineAmd64),
+            v if v == Machine::ImageFileMachineArm as u16
+                => Ok(Machine::ImageFileMachineArm64),
+            v if v == Machine::ImageFileMachineArmnt as u16
+                => Ok(Machine::ImageFileMachineArmnt),
+            v if v == Machine::ImageFileMachineEbc as u16
+                => Ok(Machine::ImageFileMachineEbc),
+            v if v == Machine::ImageFileMachineI386 as u16
+                => Ok(Machine::ImageFileMachineI386),
+            v if v == Machine::ImageFileMachineIa64 as u16
+                => Ok(Machine::ImageFileMachineIa64),
+            v if v == Machine::ImageFileMachineM32r as u16
+                => Ok(Machine::ImageFileMachineM32r),
+            v if v == Machine::ImageFileMachineMips16 as u16
+                => Ok(Machine::ImageFileMachineMips16),
+            v if v == Machine::ImageFileMachineMipsfpu as u16
+                => Ok(Machine::ImageFileMachineMipsfpu),
+            v if v == Machine::ImageFileMachineMipsfpu16 as u16
+                => Ok(Machine::ImageFileMachineMipsfpu16),
+            v if v == Machine::ImageFileMachinePowerpc as u16
+                => Ok(Machine::ImageFileMachinePowerpc),
+            v if v == Machine::ImageFileMachinePowerpcfp as u16
+                => Ok(Machine::ImageFileMachinePowerpcfp),
+            v if v == Machine::ImageFileMachineR4000 as u16
+                => Ok(Machine::ImageFileMachineR4000),
+            v if v == Machine::ImageFileMachineRiscv128 as u16
+                => Ok(Machine::ImageFileMachineRiscv128),
+            v if v == Machine::ImageFileMachineRiscv32 as u16
+                => Ok(Machine::ImageFileMachineRiscv32),
+            v if v == Machine::ImageFileMachineRiscv64 as u16
+                => Ok(Machine::ImageFileMachineRiscv64),
+            v if v == Machine::ImageFileMachineSh3 as u16
+                => Ok(Machine::ImageFileMachineSh3),
+            v if v == Machine::ImageFileMachineSh3dsp as u16
+                => Ok(Machine::ImageFileMachineSh3dsp),
+            v if v == Machine::ImageFileMachineSh4 as u16
+                => Ok(Machine::ImageFileMachineSh4),
+            v if v == Machine::ImageFileMachineSh5 as u16
+                => Ok(Machine::ImageFileMachineSh5),
+            v if v == Machine::ImageFileMachineThumb as u16
+                => Ok(Machine::ImageFileMachineThumb),
+            v if v == Machine::ImageFileMachineWcemipsv2 as u16
+                => Ok(Machine::ImageFileMachineWcemipsv2),
+            _ => {
+                error!("Unidentified machine specified.");
+                Err(())
+            }
+        }
+    }
 }
 
 bitflags! {
@@ -130,11 +192,22 @@ fn validate_msdos_header(input:&[u8]) -> IResult<&[u8], u32> {
     Ok((input, lfa))
 }
 
+fn parse_machine(input:&[u8]) -> IResult<&[u8], Machine> {
+    let (input, machine_bytes) = le_u16(input)?;
+
+    match Machine::try_from(machine_bytes) {
+        Ok(machine) => Ok((input, machine)),
+        // NOTE: I don't think this is the right error, but I'm not sure what 
+        // would be
+        Err(_) => Err(nom::Err::Error((input, nom::error::ErrorKind::Complete)))
+    }
+}
+
 fn parse_pe_file_header(input:&[u8]) -> IResult<&[u8], CoffFileHeader> {
-    let (input, machine) = le_u16(input)?;
+    let (input, machine) = parse_machine(input)?;
     let (input, num_sections) = le_u16(input)?;
     let (input, timestamp) = le_u32(input)?;
-    let (input, _) = take(8usize)(input)?;
+    let (input, _) = take(8)(input)?;
     let (input, opt_hdr_sz) = le_u16(input)?;
     let (input, flags) = le_u16(input)?;
 
