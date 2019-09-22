@@ -1,9 +1,11 @@
+use std::convert::TryFrom;
 use std::option::{Option};
-use std::sync::{Once, ONCE_INIT};
 use log::*;
-use nom::{IResult};
-use nom::bytes::complete::*;
-use nom::number::complete::*;
+use nom::{
+    bytes::complete::{tag, take},
+    number::complete::*,
+    IResult
+};
 
 #[derive(Debug)]
 #[allow(dead_code)]
@@ -224,6 +226,7 @@ fn parse_pe_file_header(input:&[u8]) -> IResult<&[u8], CoffFileHeader> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Once, ONCE_INIT};
     use super::*;
 
     const JSON_NET_ASSEMBLY : &[u8] = include_bytes!("../data/Newtonsoft.Json.dll");
