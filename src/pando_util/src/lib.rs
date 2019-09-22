@@ -1,6 +1,8 @@
+#![allow(unused_imports)]
+
 #[macro_use]
 extern crate bitflags;
-#[macro_use] 
+#[macro_use]
 extern crate log;
 extern crate pretty_env_logger;
 #[macro_use]

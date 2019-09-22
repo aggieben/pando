@@ -7,6 +7,23 @@ use nom::{
     IResult
 };
 
+// #region Types
+
+#[derive(Debug)]
+#[allow(dead_code)]
+enum Error<E> {
+    ParserError(nom::Err<E>),
+    SpecError(String)
+}
+
+impl<E> From<nom::Err<E>> for Error<E> {
+    fn from(nom_err:nom::Err<E>) -> Self {
+        Error::ParserError(nom_err)
+    }
+}
+
+type PResult<I, O, E=(I,nom::error::ErrorKind)> = Result<(I,O), Error<E>>;
+
 #[derive(Debug)]
 #[allow(dead_code)]
 struct CoffFileHeader {
@@ -165,7 +182,9 @@ struct DataDirectories {
     cli_header : u64
 }
 
-fn validate_msdos_header(input:&[u8]) -> IResult<&[u8], u32> {
+// #endregion
+
+fn parse_dos_begin(input:&[u8]) -> PResult<&[u8], ()> {
     const DOS_BEGIN : [u8; 60] = 
         [0x4d, 0x5a, 0x90, 0x00, 0x03, 0x00, 0x00, 0x00,
          0x04, 0x00, 0x00, 0x00, 0xff, 0xff, 0x00, 0x00,
@@ -175,6 +194,16 @@ fn validate_msdos_header(input:&[u8]) -> IResult<&[u8], u32> {
          0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
          0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
          0x00, 0x00, 0x00, 0x00];
+    let (input, _) = tag(&DOS_BEGIN[..])(input)?;
+    Ok((input,()))
+}
+
+fn parse_lfa(input:&[u8]) -> PResult<&[u8], u32> {
+    let (input, lfa) = le_u32(input)?;
+    Ok((input, lfa))
+}
+
+fn parse_dos_end(input:&[u8]) -> PResult<&[u8], ()> {
     const DOS_END : [u8; 64] =
         [0x0e, 0x1f, 0xba, 0x0e, 0x00, 0xb4, 0x09, 0xcd,
          0x21, 0xb8, 0x01, 0x4c, 0xcd, 0x21, 0x54, 0x68,
@@ -184,32 +213,36 @@ fn validate_msdos_header(input:&[u8]) -> IResult<&[u8], u32> {
          0x20, 0x69, 0x6e, 0x20, 0x44, 0x4f, 0x53, 0x20,
          0x6d, 0x6f, 0x64, 0x65, 0x2e, 0x0d, 0x0d, 0x0a,
          0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
-
-    let (input, _) = tag(&DOS_BEGIN[..])(input)?;
-    let (input, lfa) = le_u32(input)?;
     let (input, _) = tag(&DOS_END[..])(input)?;
+    Ok((input, ()))
+}
 
-    trace!("validated MSDOS header");
+fn validate_msdos_header(input:&[u8]) -> PResult<&[u8], u32> {
+    let (input, _) = parse_dos_begin(input)?;
+    let (input, lfa) = parse_lfa(input)?;
+    let (input, _) = parse_dos_end(input)?;
 
     Ok((input, lfa))
 }
 
-fn parse_machine(input:&[u8]) -> IResult<&[u8], Machine> {
+fn parse_machine(input:&[u8]) -> PResult<&[u8], Machine> {
     let (input, machine_bytes) = le_u16(input)?;
 
     match Machine::try_from(machine_bytes) {
         Ok(machine) => Ok((input, machine)),
-        // NOTE: I don't think this is the right error, but I'm not sure what 
-        // would be
-        Err(_) => Err(nom::Err::Error((input, nom::error::ErrorKind::Complete)))
+        Err(_) => {
+            let msg = format!("invalid machine type: {}", machine_bytes);
+            warn!("invalid machine type: {}", machine_bytes);
+            Err(Error::SpecError(msg))
+        }
     }
 }
 
-fn parse_pe_file_header(input:&[u8]) -> IResult<&[u8], CoffFileHeader> {
+fn parse_pe_file_header(input:&[u8]) -> PResult<&[u8], CoffFileHeader> {
     let (input, machine) = parse_machine(input)?;
     let (input, num_sections) = le_u16(input)?;
     let (input, timestamp) = le_u32(input)?;
-    let (input, _) = take(8)(input)?;
+    let (input, _) = take(8usize)(input)?;
     let (input, opt_hdr_sz) = le_u16(input)?;
     let (input, flags) = le_u16(input)?;
 
@@ -246,11 +279,13 @@ mod tests {
         let result = validate_msdos_header(assembly_bytes);
         match &result {
             Ok((rem, lfa)) => 
-                trace!("Result: Ok, remaining input: {} bytes; lfa: {}", rem.len(), lfa),
-            Err(nom::Err::Error((_, kind))) => 
-                trace!("Result: Err, error: {:?}", kind),
+                debug!("Result: Ok, remaining input: {} bytes; lfa: {}", rem.len(), lfa),
+            Err(Error::ParserError(nom_err)) => 
+                debug!("Result: Nom Err: {:?}", nom_err),
+            Err(Error::SpecError(err_msg)) =>
+                debug!("{}", err_msg),
             _ => 
-                trace!("Other error.")
+                debug!("Other error.")
         }
 
         assert!(result.is_ok());
@@ -268,8 +303,10 @@ mod tests {
         match &result {
             Ok((rem, header)) => 
                 trace!("Result: Ok, remaining input: {} bytes; FileHeader: {:?}", rem.len(), header),
-            Err(nom::Err::Error((_, kind))) => 
-                trace!("Result: Err, error: {:?}", kind),
+            Err(Error::ParserError(nom_err)) => 
+                debug!("Result: Nom Err: {:?}", nom_err),
+            Err(Error::SpecError(err_msg)) =>
+                debug!("{}", err_msg),
             _ => 
                 trace!("Other error.")
         }
