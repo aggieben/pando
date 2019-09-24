@@ -13,7 +13,8 @@ use nom::{
 #[allow(dead_code)]
 enum Error<E> {
     ParserError(nom::Err<E>),
-    SpecError(String)
+    SpecError(String),
+    Unexpected
 }
 
 impl<E> From<nom::Err<E>> for Error<E> {
@@ -217,7 +218,7 @@ fn parse_dos_end(input:&[u8]) -> PResult<&[u8], ()> {
     Ok((input, ()))
 }
 
-fn validate_msdos_header(input:&[u8]) -> PResult<&[u8], u32> {
+fn parse_msdos_header(input:&[u8]) -> PResult<&[u8], u32> {
     let (input, _) = parse_dos_begin(input)?;
     let (input, lfa) = parse_lfa(input)?;
     let (input, _) = parse_dos_end(input)?;
@@ -238,7 +239,7 @@ fn parse_machine(input:&[u8]) -> PResult<&[u8], Machine> {
     }
 }
 
-fn parse_pe_file_header(input:&[u8]) -> PResult<&[u8], CoffFileHeader> {
+fn parse_coff_file_header(input:&[u8]) -> PResult<&[u8], CoffFileHeader> {
     let (input, machine) = parse_machine(input)?;
     let (input, num_sections) = le_u16(input)?;
     let (input, timestamp) = le_u32(input)?;
@@ -257,58 +258,162 @@ fn parse_pe_file_header(input:&[u8]) -> PResult<&[u8], CoffFileHeader> {
     }))
 }
 
+fn parse_magic(input:&[u8]) -> PResult<&[u8], ()> {
+    const PE_MAGIC : [u8; 2] = [0x0b, 0x01];
+    let (input, _) = tag(&PE_MAGIC[..])(input)?;
+
+    Ok((input, ()))
+}
+
+fn parse_linker_version(input:&[u8]) -> PResult<&[u8], ()> {
+    const VERSION : [u8; 2] = [0x06, 0x00];
+    let (input, _) = tag(&VERSION[..])(input)?;
+
+    Ok((input, ()))
+}
+
+fn parse_standard_fields(input:&[u8]) -> PResult<&[u8], StandardFields> {
+    let (input, _) = parse_magic(input)?;
+    let (input, _) = parse_linker_version(input)?;
+    let (input, code_size) = le_u32(input)?;
+    let (input, data_size) = le_u32(input)?;
+    let (input, udata_size) = le_u32(input)?;
+    let (input, entry_point_addr) = le_u32(input)?;
+    let (input, code_base) = le_u32(input)?;
+    let (input, data_base) = le_u32(input)?;
+
+    Ok((input, StandardFields {
+        code_size : code_size,
+        initialized_data_size : data_size,
+        uninitialized_data_size : udata_size,
+        entry_point_rva : entry_point_addr,
+        code_base : code_base,
+        data_base : data_base
+    }))
+}
+
+
 #[cfg(test)]
+#[allow(non_upper_case_globals)]
+#[allow(non_snake_case)]
 mod tests {
     use std::sync::{Once, ONCE_INIT};
     use super::*;
 
     const JSON_NET_ASSEMBLY : &[u8] = include_bytes!("../data/Newtonsoft.Json.dll");
+    const TEST1_ANY_CPU_DLL : &[u8] = include_bytes!("../data/test1_anycpu.dll");
+    const TEST1_ANY_CPU_EXE : &[u8] = include_bytes!("../data/test1_anycpu.exe");
+    const TEST1_x86_DLL : &[u8] = include_bytes!("../data/test1_x86.dll");
+    const TEST1_x86_EXE : &[u8] = include_bytes!("../data/test1_x86.exe");
+    const TEST1_x64_DLL : &[u8] = include_bytes!("../data/test1_x64.dll");
+    const TEST1_x64_EXE : &[u8] = include_bytes!("../data/test1_x64.exe");
 
-    const INIT : Once = ONCE_INIT;
+    const INIT : Once = Once::new();
     fn setup() {
         INIT.call_once(|| {
-            pretty_env_logger::try_init();
-        })
+            let r = pretty_env_logger::try_init();
+            debug!("logger enabled: {:?}", r);
+        });
     }
 
-    #[test]
-    fn validate_msdos_header_ok() {
-        setup();
-        let assembly_bytes = &JSON_NET_ASSEMBLY[0..128];
+    macro_rules! parse_msdos_header_ok {
+        ($($name:ident: $value:expr,)*) => {
+        paste::item! {
+        $(
+            #[test]
+            fn [<msdos_header_ok__ $name>] () {
+                setup();
+                let assembly_bytes = &($value)[0..128];
+                let f = "[<msdos_header_ok__ $name>]";
 
-        let result = validate_msdos_header(assembly_bytes);
-        match &result {
-            Ok((rem, lfa)) => 
-                debug!("Result: Ok, remaining input: {} bytes; lfa: {}", rem.len(), lfa),
-            Err(Error::ParserError(nom_err)) => 
-                debug!("Result: Nom Err: {:?}", nom_err),
-            Err(Error::SpecError(err_msg)) =>
-                debug!("{}", err_msg),
-            _ => 
-                debug!("Other error.")
+                let result = parse_msdos_header(assembly_bytes);
+                match &result {
+                    Ok((rem, lfa)) => 
+                        debug!("[{}] Result: Ok, remaining input: {} bytes; lfa: {}", 
+                                f, rem.len(), lfa),
+                    Err(Error::ParserError(nom_err)) => 
+                        debug!("[{}] Result: Nom Err: {:?}", f, nom_err),
+                    Err(Error::SpecError(err_msg)) =>
+                        debug!("[{}] {}", f, err_msg),
+                    Err(e) => 
+                        debug!("[{}] {:?}", f, e)
+                }
+
+                assert!(result.is_ok());
+
+                let (remaining_input,_) = result.unwrap();
+                assert_eq!(remaining_input.len(), 0);
+            }
+        )*
         }
+        }
+    }
 
-        assert!(result.is_ok());
+    parse_msdos_header_ok!(
+        newtonsoft: JSON_NET_ASSEMBLY,
+        test1_anycpu_dll: TEST1_ANY_CPU_DLL,
+        test1_x86_dll: TEST1_x86_DLL,
+        test1_x64_dll: TEST1_x64_DLL,
+        test1_anycpu_exe: TEST1_ANY_CPU_EXE,
+        test1_x86_exe: TEST1_x86_EXE,
+        test1_x64_exe: TEST1_x64_EXE,
+    );
 
-        let (remaining_input,_) = result.unwrap();
-        assert_eq!(remaining_input.len(), 0);
+    macro_rules! parse_coff_file_header_ok {
+        ($($name:ident: $value:expr,)*) => {
+        paste::item! {$(
+            #[test]
+            fn [<parse_coff_file_header_ok__ $name>] () {
+                setup();
+                let section_bytes = &($value)[0x84..0x98];
+
+                let result = parse_coff_file_header(section_bytes);
+                match &result {
+                    Ok((rem, header)) => 
+                        debug!("Result: Ok, remaining input: {} bytes; FileHeader: {:?}", rem.len(), header),
+                    Err(Error::ParserError(nom_err)) => 
+                        debug!("Result: Nom Err: {:?}", nom_err),
+                    Err(Error::SpecError(err_msg)) =>
+                        debug!("{}", err_msg),
+                    Err(e) => 
+                        debug!("{:?}", e)
+                }
+
+                assert!(result.is_ok());
+
+                let (remaining_input,header) = result.unwrap();
+                assert_eq!(remaining_input.len(), 0);
+
+                let dotnetAssFlags = HeaderFlags::IMAGE_FILE_LARGE_ADDRESS_AWARE|HeaderFlags::IMAGE_FILE_EXECUTABLE_IMAGE;
+                if let Some(flags) = header.flags {
+                    assert_eq!(flags & dotnetAssFlags, dotnetAssFlags);
+                } else {
+                    assert!(false);
+                }
+            }
+        )*}}
+    }
+
+    parse_coff_file_header_ok!{
+        newtonsoft: JSON_NET_ASSEMBLY,
+        test1_anycpu_dll: TEST1_ANY_CPU_DLL,
     }
 
     #[test]
-    fn parse_pe_file_header_ok() {
+    fn parse_coff_file_header_ok__test1_anycpu_exe() {
         setup();
-        let section_bytes = &JSON_NET_ASSEMBLY[0x84..0x84 + 20];
+        let section_bytes = &(TEST1_ANY_CPU_EXE)[0x84..0x98];
 
-        let result = parse_pe_file_header(section_bytes);
+        let result = parse_coff_file_header(section_bytes);
         match &result {
             Ok((rem, header)) => 
-                trace!("Result: Ok, remaining input: {} bytes; FileHeader: {:?}", rem.len(), header),
+                debug!("Result: Ok, remaining input: {} bytes; FileHeader: {:?}", rem.len(), header),
             Err(Error::ParserError(nom_err)) => 
                 debug!("Result: Nom Err: {:?}", nom_err),
             Err(Error::SpecError(err_msg)) =>
                 debug!("{}", err_msg),
-            _ => 
-                trace!("Other error.")
+            Err(e) => 
+                debug!("{:?}", e)
         }
 
         assert!(result.is_ok());
@@ -316,12 +421,43 @@ mod tests {
         let (remaining_input,header) = result.unwrap();
         assert_eq!(remaining_input.len(), 0);
 
-        assert_eq!(header.num_sections, 3);
-        assert_eq!(header.timestamp, 0xb669c63c);
-        assert_eq!(header.opt_header_size, 0x00e0);
-        assert_eq!(header.flags, Some(
-            HeaderFlags::IMAGE_FILE_DLL
-            |HeaderFlags::IMAGE_FILE_LARGE_ADDRESS_AWARE
-            |HeaderFlags::IMAGE_FILE_EXECUTABLE_IMAGE));
+        let dotnetAssFlags = HeaderFlags::IMAGE_FILE_LARGE_ADDRESS_AWARE|HeaderFlags::IMAGE_FILE_EXECUTABLE_IMAGE;
+        if let Some(flags) = header.flags {
+            assert_eq!(flags & dotnetAssFlags, dotnetAssFlags);
+        } else {
+            assert!(false);
+        }
     }
+
+//     fn parse_standard_fields_ok() {
+//         setup();
+//         let section_bytes = &JSON_NET_ASSEMBLY[0x98..0x98+28];
+
+//         let result = parse_standard_fields(section_bytes);
+//         match &result {
+//             Ok((rem, standard_fields)) =>
+//                 debug!("Result: Ok, remaining input: {} bytes; StandardFields: {:?}", rem.len(), standard_fields),
+//             e => debug!("{:?}", e)
+//         }
+
+//         assert!(result.is_ok());
+
+//         let (remaining_input, standard_fields) = result.unwrap();
+//         assert_eq!(remaining_input.len(), 0);
+
+// /*
+
+// #[derive(Debug)]
+// struct StandardFields {
+//     code_size : u32,
+//     initialized_data_size : u32,
+//     uninitialized_data_size : u32,
+//     entry_point_rva : u32,
+//     code_base : u32,
+//     data_base : u32
+// }
+// */
+
+//         assert_eq!(standard_fields.code_size, )
+//     }
 }
