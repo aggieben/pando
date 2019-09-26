@@ -149,6 +149,27 @@ bitflags! {
 }
 
 #[derive(Debug)]
+enum Magic {
+    Pe32,
+    Pe32Plus
+}
+
+impl TryFrom<u16> for Magic {
+    type Error = ();
+
+    fn try_from(val:u16) -> Result<Magic,Self::Error> {
+        match val {
+            v if v == 0x10bu16 => Ok(Magic::Pe32),
+            v if v == 0x20bu16 => Ok(Magic::Pe32Plus),
+            _ => {
+                error!("unidentified machine specified");
+                Err(())
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
 #[allow(dead_code)]
 struct OptionalHeader {
     standard_fields : StandardFields,
@@ -158,6 +179,9 @@ struct OptionalHeader {
 
 #[derive(Debug)]
 struct StandardFields {
+    magic : Magic,
+    linker_major : u8,
+    linker_minor : u8,
     code_size : u32,
     initialized_data_size : u32,
     uninitialized_data_size : u32,
@@ -258,23 +282,30 @@ fn parse_coff_file_header(input:&[u8]) -> PResult<&[u8], CoffFileHeader> {
     }))
 }
 
-fn parse_magic(input:&[u8]) -> PResult<&[u8], ()> {
-    const PE_MAGIC : [u8; 2] = [0x0b, 0x01];
-    let (input, _) = tag(&PE_MAGIC[..])(input)?;
+fn parse_magic(input:&[u8]) -> PResult<&[u8], Magic> {
+    let (input, magic_bytes) = le_u16(input)?;
 
-    Ok((input, ()))
+    match Magic::try_from(magic_bytes) {
+        Ok(magic) => Ok((input, magic)),
+        Err(_) => {
+            let msg = format!("invalid magic: {}", magic_bytes);
+            warn!("invalid magic: {}", magic_bytes);
+            Err(Error::SpecError(msg))
+        }
+    }
 }
 
-fn parse_linker_version(input:&[u8]) -> PResult<&[u8], ()> {
-    const VERSION : [u8; 2] = [0x06, 0x00];
-    let (input, _) = tag(&VERSION[..])(input)?;
+fn parse_linker_version(input:&[u8]) -> PResult<&[u8], (u8,u8)> {
+    let (input, bytes) = take(2usize)(input)?;
+    let major = bytes[0];
+    let minor = bytes[1];
 
-    Ok((input, ()))
+    Ok((input, (major, minor)))
 }
 
 fn parse_standard_fields(input:&[u8]) -> PResult<&[u8], StandardFields> {
-    let (input, _) = parse_magic(input)?;
-    let (input, _) = parse_linker_version(input)?;
+    let (input, magic) = parse_magic(input)?;
+    let (input, (linker_major, linker_minor)) = parse_linker_version(input)?;
     let (input, code_size) = le_u32(input)?;
     let (input, data_size) = le_u32(input)?;
     let (input, udata_size) = le_u32(input)?;
@@ -283,6 +314,9 @@ fn parse_standard_fields(input:&[u8]) -> PResult<&[u8], StandardFields> {
     let (input, data_base) = le_u32(input)?;
 
     Ok((input, StandardFields {
+        magic : magic,
+        linker_major : linker_major,
+        linker_minor : linker_minor,
         code_size : code_size,
         initialized_data_size : data_size,
         uninitialized_data_size : udata_size,
@@ -291,7 +325,6 @@ fn parse_standard_fields(input:&[u8]) -> PResult<&[u8], StandardFields> {
         data_base : data_base
     }))
 }
-
 
 #[cfg(test)]
 #[allow(non_upper_case_globals)]
@@ -314,6 +347,15 @@ mod tests {
             let r = pretty_env_logger::try_init();
             debug!("logger enabled: {:?}", r);
         });
+    }
+
+    fn get_lfa(input:&[u8]) -> usize {
+        let lfa_bytes = &input[0x3c..0x3c+4];
+
+        lfa_bytes[0] as usize         |
+        (lfa_bytes[1] as usize) << 1  |
+        (lfa_bytes[2] as usize) << 2  |
+        (lfa_bytes[3] as usize) << 3
     }
 
     macro_rules! parse_msdos_header_ok {
@@ -365,7 +407,10 @@ mod tests {
             #[test]
             fn [<parse_coff_file_header_ok__ $name>] () {
                 setup();
-                let section_bytes = &($value)[0x84..0x98];
+                let lfa_offset = get_lfa($value);
+
+                let section_offset = lfa_offset + 4;
+                let section_bytes = &($value)[section_offset..section_offset+20];
 
                 let result = parse_coff_file_header(section_bytes);
                 match &result {
@@ -381,15 +426,8 @@ mod tests {
 
                 assert!(result.is_ok());
 
-                let (remaining_input,header) = result.unwrap();
+                let (remaining_input,_) = result.unwrap();
                 assert_eq!(remaining_input.len(), 0);
-
-                let dotnetAssFlags = HeaderFlags::IMAGE_FILE_LARGE_ADDRESS_AWARE|HeaderFlags::IMAGE_FILE_EXECUTABLE_IMAGE;
-                if let Some(flags) = header.flags {
-                    assert_eq!(flags & dotnetAssFlags, dotnetAssFlags);
-                } else {
-                    assert!(false);
-                }
             }
         )*}}
     }
@@ -397,37 +435,63 @@ mod tests {
     parse_coff_file_header_ok!{
         newtonsoft: JSON_NET_ASSEMBLY,
         test1_anycpu_dll: TEST1_ANY_CPU_DLL,
+        test1_anycpu_exe: TEST1_ANY_CPU_EXE,
+        test1_x86_dll: TEST1_x86_DLL,
+        test1_x86_exe: TEST1_x86_EXE,
+        test1_x64_dll: TEST1_x64_DLL,
+        test1_x64_exe: TEST1_x64_EXE,
     }
 
-    #[test]
-    fn parse_coff_file_header_ok__test1_anycpu_exe() {
-        setup();
-        let section_bytes = &(TEST1_ANY_CPU_EXE)[0xec..0xec+20];
+    // #[test]
+    // fn parse_coff_file_header_ok__test1_anycpu_exe() {
+    //     setup();
+    //     let section_bytes = &(TEST1_ANY_CPU_EXE)[0xec..0xec+20];
 
-        let result = parse_coff_file_header(section_bytes);
-        match &result {
-            Ok((rem, header)) => 
-                debug!("Result: Ok, remaining input: {} bytes; FileHeader: {:?}", rem.len(), header),
-            Err(Error::ParserError(nom_err)) => 
-                debug!("Result: Nom Err: {:?}", nom_err),
-            Err(Error::SpecError(err_msg)) =>
-                debug!("{}", err_msg),
-            Err(e) => 
-                debug!("{:?}", e)
-        }
+    //     let result = parse_coff_file_header(section_bytes);
+    //     match &result {
+    //         Ok((rem, header)) => 
+    //             debug!("Result: Ok, remaining input: {} bytes; FileHeader: {:?}", rem.len(), header),
+    //         Err(Error::ParserError(nom_err)) => 
+    //             debug!("Result: Nom Err: {:?}", nom_err),
+    //         Err(Error::SpecError(err_msg)) =>
+    //             debug!("{}", err_msg),
+    //         Err(e) => 
+    //             debug!("{:?}", e)
+    //     }
 
-        assert!(result.is_ok());
+    //     assert!(result.is_ok());
 
-        let (remaining_input,header) = result.unwrap();
-        assert_eq!(remaining_input.len(), 0);
+    //     let (remaining_input,header) = result.unwrap();
+    //     assert_eq!(remaining_input.len(), 0);
 
-        let dotnetAssFlags = HeaderFlags::IMAGE_FILE_LARGE_ADDRESS_AWARE|HeaderFlags::IMAGE_FILE_EXECUTABLE_IMAGE;
-        if let Some(flags) = header.flags {
-            assert_eq!(flags & dotnetAssFlags, dotnetAssFlags);
-        } else {
-            assert!(false);
-        }
-    }
+    //     let dotnetAssFlags = HeaderFlags::IMAGE_FILE_LARGE_ADDRESS_AWARE|HeaderFlags::IMAGE_FILE_EXECUTABLE_IMAGE;
+    //     if let Some(flags) = header.flags {
+    //         assert_eq!(flags & dotnetAssFlags, dotnetAssFlags);
+    //     } else {
+    //         assert!(false);
+    //     }
+    // }
+
+    // macro_rules! parse_standard_fields_ok {
+    //     ($($name:ident: $value:expr,)*) => {
+    //     paste::item! {$(
+    //         #[test]
+    //         fn [<parse_standard_fields_ok__ $name>] () {
+    //             setup();
+    //             let (_, lfa) = le_u32(&$value[0x3c..0x3c+4]).unwrap();
+    //             let section_base = lfa as usize + 4;
+    //             let section_bytes = &($value)[section_base..section_base+24];
+
+    //             let result = parse_standard_fields(section_bytes);
+
+    //             assert!(result.is_ok());
+    //         }
+    //     )*}}
+    // }
+
+    // parse_standard_fields_ok! {
+    //     newtonsoft: JSON_NET_ASSEMBLY,
+    // }
 
 //     fn parse_standard_fields_ok() {
 //         setup();
