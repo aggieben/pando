@@ -402,7 +402,7 @@ mod tests {
     #[test]
     fn parse_coff_file_header_ok__test1_anycpu_exe() {
         setup();
-        let section_bytes = &(TEST1_ANY_CPU_EXE)[0x84..0x98];
+        let section_bytes = &(TEST1_ANY_CPU_EXE)[0xec..0xec+20];
 
         let result = parse_coff_file_header(section_bytes);
         match &result {
