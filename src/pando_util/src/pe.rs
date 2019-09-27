@@ -236,19 +236,35 @@ struct WindowsFields {
     subsystem : u16,
     dll_flags : Option<DllFlags>,
     stack_reserve_size : ImageMemorySize,
-    stack_commit_size : ImageMemorySize, // TODO: write enum for this
+    stack_commit_size : ImageMemorySize,
     heap_reserve_size : ImageMemorySize,
     heap_commit_size : ImageMemorySize,
-    rva_descriptor_count : u32,
-    // TODO: something for rva descriptors
+    directory_entry_count : u32,
+}
+
+#[derive(Debug)]
+struct DirectoryEntry {
+    rva : u32,
+    size : u32
 }
 
 #[derive(Debug)]
 struct DataDirectories {
-    import_table : u64,
-    relocation_table : u64,
-    import_address_table : u64,
-    cli_header : u64
+    export_table : DirectoryEntry,
+    import_table : DirectoryEntry,
+    resource_table : DirectoryEntry,
+    exception_table : DirectoryEntry,
+    certificate_table : DirectoryEntry,
+    base_relocation_table : DirectoryEntry,
+    debug : DirectoryEntry,
+    architecture : u64,
+    global_pointer : DirectoryEntry,
+    tls_table : DirectoryEntry,
+    load_config_table : DirectoryEntry,
+    bound_import_table : DirectoryEntry,
+    import_address_table : DirectoryEntry,
+    delay_import_descriptor : DirectoryEntry,
+    clr_runtime_header : DirectoryEntry
 }
 
 // #endregion
@@ -443,7 +459,7 @@ fn parse_windows_fields(input:&[u8], magic:Magic) -> PResult<&[u8], WindowsField
         }
     };
 
-    let (input, rva_descriptor_count) = le_u32(input)?;
+    let (input, directory_entry_count) = le_u32(input)?;
 
     Ok((input, WindowsFields {
         image_base : image_base,
@@ -464,7 +480,7 @@ fn parse_windows_fields(input:&[u8], magic:Magic) -> PResult<&[u8], WindowsField
         stack_commit_size : stack_commit_size,
         heap_reserve_size : heap_reserve_size,
         heap_commit_size : heap_commit_size,
-        rva_descriptor_count : rva_descriptor_count
+        directory_entry_count : directory_entry_count
     }))
 }
 
