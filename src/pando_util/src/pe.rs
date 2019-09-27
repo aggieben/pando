@@ -119,8 +119,8 @@ impl TryFrom<u16> for Machine {
                 => Ok(Machine::ImageFileMachineThumb),
             v if v == Machine::ImageFileMachineWcemipsv2 as u16
                 => Ok(Machine::ImageFileMachineWcemipsv2),
-            _ => {
-                error!("Unidentified machine specified.");
+            v => {
+                error!("Unidentified machine specified: 0x{:x}", v);
                 Err(())
             }
         }
@@ -192,12 +192,55 @@ struct StandardFields {
 }
 
 #[derive(Debug)]
+enum ImageOffset {
+    Pe32Offset(u32),
+    Pe32PlusOffset(u64)
+}
+
+#[derive(Debug)]
+enum ImageMemorySize {
+    Pe32MemorySize(u32),
+    Pe32PlusMemorySize(u64)
+}
+
+bitflags! {
+    struct DllFlags : u16 {
+        const IMAGE_DLLCHARACTERISTICS_HIGH_ENTROPY_VA       = 0x0020;
+        const IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE          = 0x0040;
+        const IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY       = 0x0080;
+        const IMAGE_DLLCHARACTERISTICS_NX_COMPAT             = 0x0100;
+        const IMAGE_DLLCHARACTERISTICS_NO_ISOLATION          = 0x0200;
+        const IMAGE_DLLCHARACTERISTICS_NO_SEH                = 0x0400;
+        const IMAGE_DLLCHARACTERISTICS_NO_BIND               = 0x0800;
+        const IMAGE_DLLCHARACTERISTICS_APPCONTAINER          = 0x1000;
+        const IMAGE_DLLCHARACTERISTICS_WDM_DRIVER            = 0x2000;
+        const IMAGE_DLLCHARACTERISTICS_GUARD_CF              = 0x4000;
+        const IMAGE_DLLCHARACTERISTICS_TERMINAL_SERVER_AWARE = 0x8000;
+    }
+}
+
+#[derive(Debug)]
 struct WindowsFields {
-    image_base : u32,
+    image_base : ImageOffset,
     section_alignment : u32,
     file_alignment : u32,
+    major_os_version : u16,
+    minor_os_version : u16,
+    major_image_version : u16,
+    minor_image_version : u16,
+    major_subsystem_version : u16,
+    minor_subsystem_version : u16,
     image_size : u32,
-    header_size : u32
+    header_size : u32, // rounded up to file alignment
+    checksum : u32,
+    subsystem : u16,
+    dll_flags : Option<DllFlags>,
+    stack_reserve_size : ImageMemorySize,
+    stack_commit_size : ImageMemorySize, // TODO: write enum for this
+    heap_reserve_size : ImageMemorySize,
+    heap_commit_size : ImageMemorySize,
+    rva_descriptor_count : u32,
+    // TODO: something for rva descriptors
 }
 
 #[derive(Debug)]
@@ -330,6 +373,107 @@ fn parse_standard_fields(input:&[u8]) -> PResult<&[u8], StandardFields> {
     }))
 }
 
+fn parse_windows_fields(input:&[u8], magic:Magic) -> PResult<&[u8], WindowsFields> {
+    let (input, image_base) = match magic {
+        Magic::Pe32 => {
+            let (ip, addr) = le_u32(input)?;
+            (ip, ImageOffset::Pe32Offset(addr))
+        },
+        Magic::Pe32Plus => {
+            let (ip, addr) = le_u64(input)?;
+            (ip, ImageOffset::Pe32PlusOffset(addr))
+        }
+    };
+
+    let (input, section_alignment) = le_u32(input)?;
+    let (input, file_alignment) = le_u32(input)?;
+    let (input, major_os_version) = le_u16(input)?;
+    let (input, minor_os_version) = le_u16(input)?;
+    let (input, major_image_version) = le_u16(input)?;
+    let (input, minor_image_version) = le_u16(input)?;
+    let (input, major_subsystem_version) = le_u16(input)?;
+    let (input, minor_subsystem_version) = le_u16(input)?;
+    let (input, image_size) = le_u32(input)?;
+    let (input, header_size) = le_u32(input)?;
+    let (input, checksum) = le_u32(input)?;
+    let (input, subsystem) = le_u16(input)?;
+    let (input, dll_flags) = le_u16(input)?;
+    
+    let (input, stack_reserve_size) = match magic {
+        Magic::Pe32 => {
+            let (ip, addr) = le_u32(input)?;
+            (ip, ImageMemorySize::Pe32MemorySize(addr))
+        },
+        Magic::Pe32Plus => {
+            let (ip, addr) = le_u64(input)?;
+            (ip, ImageMemorySize::Pe32PlusMemorySize(addr))
+        }
+    };
+
+    let (input, stack_commit_size) = match magic {
+        Magic::Pe32 => {
+            let (ip, addr) = le_u32(input)?;
+            (ip, ImageMemorySize::Pe32MemorySize(addr))
+        },
+        Magic::Pe32Plus => {
+            let (ip, addr) = le_u64(input)?;
+            (ip, ImageMemorySize::Pe32PlusMemorySize(addr))
+        }
+    };
+
+    let (input, heap_reserve_size) = match magic {
+        Magic::Pe32 => {
+            let (ip, addr) = le_u32(input)?;
+            (ip, ImageMemorySize::Pe32MemorySize(addr))
+        },
+        Magic::Pe32Plus => {
+            let (ip, addr) = le_u64(input)?;
+            (ip, ImageMemorySize::Pe32PlusMemorySize(addr))
+        }
+    };
+
+    let (input, heap_commit_size) = match magic {
+        Magic::Pe32 => {
+            let (ip, addr) = le_u32(input)?;
+            (ip, ImageMemorySize::Pe32MemorySize(addr))
+        },
+        Magic::Pe32Plus => {
+            let (ip, addr) = le_u64(input)?;
+            (ip, ImageMemorySize::Pe32PlusMemorySize(addr))
+        }
+    };
+
+    let (input, rva_descriptor_count) = le_u32(input)?;
+
+    Ok((input, WindowsFields {
+        image_base : image_base,
+        section_alignment : section_alignment,
+        file_alignment : file_alignment,
+        major_os_version : major_os_version,
+        minor_os_version : minor_os_version,
+        major_image_version : major_image_version,
+        minor_image_version : minor_image_version,
+        major_subsystem_version : major_subsystem_version,
+        minor_subsystem_version : minor_subsystem_version,
+        image_size : image_size,
+        header_size : header_size,
+        checksum : checksum,
+        subsystem : subsystem,
+        dll_flags : DllFlags::from_bits(dll_flags),
+        stack_reserve_size : stack_reserve_size,
+        stack_commit_size : stack_commit_size,
+        heap_reserve_size : heap_reserve_size,
+        heap_commit_size : heap_commit_size,
+        rva_descriptor_count : rva_descriptor_count
+    }))
+}
+
+/*
+    Notes about the eventual parse_pe_image() function:
+        - need to validate optional header size in the coff header before
+          parsing the optional headers
+*/
+
 #[cfg(test)]
 #[allow(non_upper_case_globals)]
 #[allow(non_snake_case)]
@@ -337,6 +481,7 @@ mod tests {
     use std::sync::{Once, ONCE_INIT};
     use super::*;
 
+    // #region Test Assembly Inputs
     const JSON_NET_ASSEMBLY : &[u8] = include_bytes!("../data/Newtonsoft.Json.dll");
     const TEST1_ANY_CPU_DLL : &[u8] = include_bytes!("../data/test1_anycpu.dll");
     const TEST1_ANY_CPU_EXE : &[u8] = include_bytes!("../data/test1_anycpu.exe");
@@ -344,6 +489,7 @@ mod tests {
     const TEST1_x86_EXE : &[u8] = include_bytes!("../data/test1_x86.exe");
     const TEST1_x64_DLL : &[u8] = include_bytes!("../data/test1_x64.dll");
     const TEST1_x64_EXE : &[u8] = include_bytes!("../data/test1_x64.exe");
+    // #endregion
 
     const INIT : Once = Once::new();
     fn setup() {
@@ -360,6 +506,15 @@ mod tests {
         (lfa_bytes[1] as usize) << 1  |
         (lfa_bytes[2] as usize) << 2  |
         (lfa_bytes[3] as usize) << 3
+    }
+
+    fn get_magic(input:&[u8]) -> Magic {
+        let lfa = get_lfa(input);
+        let optional_header_base = lfa + 24; // signature + coff header
+        let (_, magic) =
+            parse_magic(&input[optional_header_base..optional_header_base+2])
+            .unwrap();
+        magic
     }
 
     macro_rules! parse_msdos_header_ok {
@@ -458,35 +613,57 @@ mod tests {
         test1_x64_exe: TEST1_x64_EXE,
     }
 
-//     fn parse_standard_fields_ok() {
-//         setup();
-//         let section_bytes = &JSON_NET_ASSEMBLY[0x98..0x98+28];
+    macro_rules! parse_windows_fields_ok {
+        ($($name:ident: $input:expr,)*) => {
+        paste::item! {$(
+            #[test]
+            fn [<parse_windows_fields_ok__ $name>] () {
+                setup();
+                let magic = get_magic($input);
+                let lfa = get_lfa($input);
+                let coff_header_base = lfa+4;
+                let coff_header_end = coff_header_base+20;
+                let (_, coff_header) = 
+                    parse_coff_file_header(&$input[coff_header_base..coff_header_end])
+                    .unwrap();
 
-//         let result = parse_standard_fields(section_bytes);
-//         match &result {
-//             Ok((rem, standard_fields)) =>
-//                 debug!("Result: Ok, remaining input: {} bytes; StandardFields: {:?}", rem.len(), standard_fields),
-//             e => debug!("{:?}", e)
-//         }
+                match magic {
+                    Magic::Pe32 => if coff_header.opt_header_size < 24 {
+                        return;
+                    },
+                    Magic::Pe32Plus => if coff_header.opt_header_size < 28 {
+                        return;
+                    }
+                }
 
-//         assert!(result.is_ok());
+                let (section_base, section_end) = 
+                    match magic {
+                        Magic::Pe32 => {
+                            let base = lfa + 4 + 20 + 28;
+                            (base, base + 68)
+                        },
+                        Magic::Pe32Plus => {
+                            let base = lfa + 4 + 20 + 24;
+                            (base, base + 88)
+                        }
+                    };
+                
+                let result = parse_windows_fields(
+                    &$input[section_base..section_end],
+                    magic);
 
-//         let (remaining_input, standard_fields) = result.unwrap();
-//         assert_eq!(remaining_input.len(), 0);
+                assert!(result.is_ok());
+            }
+        )*}}
+    }
 
-// /*
-
-// #[derive(Debug)]
-// struct StandardFields {
-//     code_size : u32,
-//     initialized_data_size : u32,
-//     uninitialized_data_size : u32,
-//     entry_point_rva : u32,
-//     code_base : u32,
-//     data_base : u32
-// }
-// */
-
-//         assert_eq!(standard_fields.code_size, )
-//     }
+    parse_windows_fields_ok! {
+        newtonsoft: JSON_NET_ASSEMBLY,
+        test1_anycpu_dll: TEST1_ANY_CPU_DLL,
+        test1_anycpu_exe: TEST1_ANY_CPU_EXE,
+        test1_x86_dll: TEST1_x86_DLL,
+        test1_x86_exe: TEST1_x86_EXE,
+        test1_x64_dll: TEST1_x64_DLL,
+        test1_x64_exe: TEST1_x64_EXE,
+    }
 }
